@@ -16,4 +16,7 @@
 
 ##Day 2: Create the produt pojo (plain old java object) and add in-memory 'GET /api/products' endpoints. Constructor injection. 
 
+###Completed today 
+-built product POJO (Map-based storage, @Service), Product
+
 
