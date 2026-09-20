@@ -1,13 +1,15 @@
 package com.example.orders.product;
 
+import java.math.BigDecimal;
+
 public class Product {
 
     private Long id;
     private String name;
-    private double price;
+    private BigDecimal price;
 
 
-    public Product(Long id, String name, double price){
+    public Product(Long id, String name, BigDecimal price){
         this.id = id;
         this.name = name;
         this.price = price;
@@ -22,7 +24,7 @@ public class Product {
         return name;
     }
 
-    public double getPrice(){
+    public BigDecimal getPrice(){
         return price;
     }
 
