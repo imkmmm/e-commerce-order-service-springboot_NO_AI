@@ -1,6 +1,7 @@
 package com.example.orders.order;
 
 
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
@@ -29,7 +30,7 @@ public class OrderController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public Order create(@RequestBody CreateOrderRequest request){
+    public Order create(@RequestBody @Valid CreateOrderRequest request){
         return orderService.createOrder(request);
     }
 

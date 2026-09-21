@@ -1,4 +1,7 @@
 package com.example.orders.order;
 
-public record OrderItemRequest(Long productId, int quantity) {
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
+
+public record OrderItemRequest(@NotNull Long productId, @Positive@NotNull int quantity) {
 }
