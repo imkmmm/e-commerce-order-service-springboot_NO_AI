@@ -71,3 +71,33 @@
 - **`@ResponseStatus` vs `ResponseEntity`:** `@ResponseStatus` fixes the response status once, at compile time, for the whole handler method. `ResponseEntity` decides it dynamically at runtime and allows setting headers (e.g. a `Location` header on a `201`). Chose the simpler, fixed option since this endpoint's outcome never varies.
 - **Cross-service dependency resolution:** `OrderService` depends on `ProductService` via constructor injection — the same DI mechanism already used between `ProductController` and `ProductService`, reused one layer down to resolve `productId`s into real `Product` objects at order-creation time.
 
+## Day 5: POST /api/products, Bean Validation, and cascading validation on orders
+
+### Completed Today
+- built `CreateProductRequest` as a Java `record` (`name` + `BigDecimal price`) — the client-facing shape for creating a product, with no `id` since the server assigns it (same DTO-vs-domain separation as Day 4)
+- added `ProductService.createProduct(CreateProductRequest)`: builds a `Product` with a generated id, stores it in the map, returns it
+- worked out the id-counter trap: the constructor seeds ids 1–4, so a counter starting at 0 would silently overwrite a seeded product on the first POST; seeded the `AtomicLong` from `maxId + 1`, computed from the map's keys (stream `.max()`), so it stays correct if more seed products are added later; compared `getAndIncrement()` (counter = next id to hand out) with `incrementAndGet()` (counter = last id handed out) — same first id, different starting value
+- added `POST /api/products` to `ProductController` with `@RequestBody` + `@ResponseStatus(HttpStatus.CREATED)`; fixed a compile error (a comma between the parameter type and its name)
+- ran the POST before the endpoint existed and got `405` (`HttpRequestMethodNotSupportedException`); after adding it, the same curl flipped to `201` with `"id":5`; before validation existed, a blank name, negative price, and missing price were all accepted and stored
+- added `spring-boot-starter-validation` to `pom.xml`; IntelliJ showed "dependency not found" until the Maven project was reloaded
+- got constraint placement wrong twice before fixing it: (1) `@NotBlank`/`@NotNull` above the `record` declaration applied to the whole class → `HV000030 UnexpectedTypeException`, and every request (even a valid one) returned `500`; (2) constraints on the wrong components (`@NotNull` on `name` lets `""` through, `@NotBlank` on a `BigDecimal` has no validator); final version: `@NotBlank` on `name`, `@NotNull @Positive` on `price`, and `@Valid` on the controller's `@RequestBody`
+- verified via curl on WSL: blank / whitespace-only / missing name and negative / zero / missing price all return `400` (`MethodArgumentNotValidException`, logged with the field, rejected value, and message); malformed JSON returns `400` from a different exception (`HttpMessageNotReadableException`); a valid product returns `201`; rejected requests never reach the service, so no id is consumed and nothing invalid is stored
+- extended validation to orders: `@Valid` on `OrderController.create`, `@NotEmpty` on `items`, `@NotNull` on `productId`, `@Positive` on `quantity`
+- tested the order endpoint before adding the cascade: `quantity: -5` returned `201` with a total of `-449.95`; after cascading validation into the list, `-5`, `0`, and a bad second element (`items[1].quantity`) all return `400`, so every element is checked, not just the first
+- found that a missing `quantity` never reaches validation: it's a primitive `int`, so Jackson rejects the `null` first (`Cannot map null into type int`) — still a `400`, but from `HttpMessageNotReadableException` rather than a constraint
+- confirmed a nonexistent `productId` (999) is a business rule, not a format check, so no annotation catches it — it returns `404` from the `orElseThrow(...)` with `ResponseStatusException(NOT_FOUND)` already in `OrderService.createOrder` from Day 4
+- hit a shell snag while testing: an unclosed quote in a curl `-d` argument hung the terminal, and pasting several commands at once tangled the output — run them one at a time
+
+### Things implemented from resources
+- **Bean Validation on record components:** constraint annotations go directly on the record components (inside the parentheses). Put above the `record` line, they apply to the whole object instead of a field. `@Valid` on the `@RequestBody` parameter is what triggers the checking; without it the annotations do nothing.
+- **Which constraint fits which type:** `@NotBlank` only works on strings and rejects null, empty, and whitespace-only values; `@NotNull` only rejects null; `@Positive` treats `null` as valid, so a `BigDecimal` needs `@NotNull` alongside it; `@NotEmpty` rejects null and empty collections.
+- **Cascading validation into collections:** `@Valid` on the controller parameter only validates the outer record. Constraints on the elements inside a `List` are skipped unless validation is cascaded into the list — field paths like `items[1].quantity` in the error output show the cascade worked.
+- **Parse-time vs validation-time failures:** Jackson fails while reading the body (`HttpMessageNotReadableException`) before the object exists; Bean Validation runs after the object is built (`MethodArgumentNotValidException`). Spring's built-in `DefaultHandlerExceptionResolver` maps both to `400` (and an unsupported method to `405`), logged at WARN as "Resolved".
+- **Reading validation logs:** each error names the field, the rejected value, and a default message; the `codes` list is a set of lookup keys for customizing messages later.
+- **`AtomicLong` counter semantics:** `getAndIncrement()` returns then increments; `incrementAndGet()` increments then returns — the initial value has to match whichever is used, or the first generated id collides with a seeded one.
+- **Primitive `int` in a request record:** a primitive can't be null, so an absent JSON field fails at deserialization instead of reaching validation.
+
+### Next
+- add a global exception handler (`@RestControllerAdvice`) so validation, parse, and not-found errors return one consistent JSON body instead of Spring's default — the current error responses also include a full stack `trace` field, so check where that comes from and turn it off
+- move `NOT_FOUND` handling out of the service layer (`OrderService` currently throws an HTTP-aware `ResponseStatusException`)
+- then connect to a real Postgres database
