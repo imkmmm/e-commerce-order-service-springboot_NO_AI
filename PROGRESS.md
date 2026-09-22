@@ -100,4 +100,3 @@
 ### Next
 - add a global exception handler (`@RestControllerAdvice`) so validation, parse, and not-found errors return one consistent JSON body instead of Spring's default — the current error responses also include a full stack `trace` field, so check where that comes from and turn it off
 - move `NOT_FOUND` handling out of the service layer (`OrderService` currently throws an HTTP-aware `ResponseStatusException`)
-- then connect to a real Postgres database
