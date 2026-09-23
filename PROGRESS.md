@@ -1,6 +1,6 @@
 # Progress Log - 25 Day Challenge
 
-##Day 1: Project initialisation and Health check
+## Day 1: Project initialisation and Health check
 
 ### Completed Today 
 - generated a spring boot project using spring initializr with dependencies: web, actuator, devtools. 
@@ -14,9 +14,9 @@
 - **Chapter 10 (REST):** '@RestController' is a specialized version of '@Controller' that combines '@Controller' and '@ResponseBody'. The method returns raw data directly into the HTTP response body rather than looking for a view like an html file.
 
 
-##Day 2: Create the produt pojo (plain old java object) and add in-memory 'GET /api/products' endpoints. Constructor injection. 
+## Day 2: Create the produt pojo (plain old java object) and add in-memory 'GET /api/products' endpoints. Constructor injection. 
 
-###Completed today 
+### Completed today 
 - created new package 'com.example.orders.prodcut' for all product-related classes.
 - built 'Product.java' - plain POJO with private fields (id, name, price), constructor and getters.
 - built 'ProductService.java' - use annotation '@Service', holds a 'Map<Long, product' (HashMap) as in-memory storage instead of a List, because findById needs direct key lookup rather than looping through a list.
@@ -28,9 +28,9 @@
 - verified all three URLs: `/api/products` (returns array), `/api/products/1` (returns single product), `/api/products/99` (throws, confirms error path)
 - saw the full stack trace in the terminal for the bad-id case — `NoSuchElementException: No value present` at `Optional.orElseThrow()`, bubbling up through Spring's DispatcherServlet to a 500 response
 
-##Day 3: HTTP error semantics — mapping exceptions to proper status codes.
+### Day 3: HTTP error semantics — mapping exceptions to proper status codes.
 
-###Completed today: 
+### Completed today: 
 - identified that `ProductController.findById()`'s `.orElseThrow()` (no arguments) was throwing a plain `NoSuchElementException`, which Spring has no built-in mapping for, so it defaulted to a 500 Internal Server Error
 - imported `org.springframework.http.HttpStatus` and `org.springframework.web.server.ResponseStatusException`
 - changed `.orElseThrow()` to `.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Product not found with id: " + id))` — using the supplier overload so the exception is only constructed lazily, on the empty-`Optional` path
@@ -41,13 +41,13 @@
 
 
 
-###Things implemented
+### Things implemented
 
 
 
-##Day 4: Modeling Order-Product — request DTOs, cross-service resolution, and BigDecimal totals
+## Day 4: Modeling Order-Product — request DTOs, cross-service resolution, and BigDecimal totals
 
-###Completed today: 
+### Completed today: 
 - chose the line-item pattern (`Order` holds `List<OrderItem>`, each wrapping a `Product` + `quantity`) over a bare `List<Product>` on `Order`, so quantity-per-product can actually be represented
 - created `com.example.orders.order` package
 - built `OrderItemRequest` and `CreateOrderRequest` as Java `record`s — the client-facing shape (bare `productId` + `quantity`), kept separate from the domain objects; caught and renamed an initial field called `request` (circular, self-referential naming) to `productId`, and `count` to `quantity` for domain-consistent naming
@@ -63,7 +63,7 @@
 - verified the whole feature end-to-end via curl from WSL: `POST /api/orders` against a real seeded product resolved to the actual `Product` object (not just the echoed id) and computed the correct total (`89.99 × 2 = 179.98`); `POST /api/orders` with a nonexistent `productId` correctly returned `404`
 - discovered `ProductController` has no `POST` endpoint yet (product data is seeded via constructor) — `POST /api/products` currently returns `405 Method Not Allowed`
 
-###Things implemented
+### Things implemented
 - **Request DTO vs domain object separation:** the shape a client sends (`OrderItemRequest`: bare `productId` + `quantity`) is deliberately a different type from what's stored internally (`OrderItem`: a resolved `Product` + `quantity`) — the client never has, and shouldn't send, a full `Product` object, only a reference to one.
 - **Java `record`s:** used for the two request DTOs since they're pure, immutable data carriers — the language generates the constructor, field accessors (`.productId()`, not `.getProductId()`), `equals()`/`hashCode()`/`toString()` automatically.
 - **`@RequestBody` and Jackson deserialization:** Spring Boot's `parameter-names` compiler module lets Jackson map incoming JSON fields onto a record's constructor parameters directly, with no `@JsonProperty` annotations needed.
@@ -100,3 +100,28 @@
 ### Next
 - add a global exception handler (`@RestControllerAdvice`) so validation, parse, and not-found errors return one consistent JSON body instead of Spring's default — the current error responses also include a full stack `trace` field, so check where that comes from and turn it off
 - move `NOT_FOUND` handling out of the service layer (`OrderService` currently throws an HTTP-aware `ResponseStatusException`)
+
+## Day 6: Global exception handling with @RestControllerAdvice
+
+### Completed Today
+- built `ErrorResponse` as a Java `record` (`status` int, `message` String, `error` List<String>) — the single JSON shape every error response now returns, in `com.example.orders.error`
+- created `GlobalExceptionHandler`, annotated `@RestControllerAdvice`, so its `@ExceptionHandler` methods apply to every controller in the app instead of just one
+- diagnosed the starting problem: before today, thrown exceptions fell through to Spring Boot's default `BasicErrorController`, which returns a generic body (`timestamp`, `status`, `error`, `message`, `path`) plus a full `trace` field exposing internal class names and line numbers — traced this to devtools' dev-time default of including stack traces in error responses
+- added four handlers, one exception type at a time, testing with curl after each:
+  - `ResponseStatusException` → pulls `getStatusCode().value()` and `getReason()` straight from the exception, since those were set explicitly when thrown (Day 4's not-found cases)
+  - `MethodArgumentNotValidException` → walks `ex.getBindingResult().getFieldErrors()`, builds a `field: message` string per `FieldError`, returns them as the `error` list with a 400
+  - `HttpMessageNotReadableException` → fixed generic message ("Malformed request body") and empty error list; deliberately doesn't expose Jackson's internal parser text
+  - `Exception` (catch-all) → added a `private static final Logger` field via SLF4J; logs the full exception server-side with `log.error("Unhandled exception", ex)` before returning a generic 500, so the trace never reaches the client
+- verified handler-matching order: since `ResponseStatusException` and `MethodArgumentNotValidException` are subtypes of `Exception`, Spring still routes them to their specific handlers first — the catch-all only catches what isn't named explicitly
+- reran Day 3's `/api/products/abc` case (non-numeric path variable) as an unplanned fifth test: it throws `MethodArgumentTypeMismatchException`, which isn't one of the three named types, so it fell through to the catch-all as predicted — confirmed via the server log (full trace logged) and the client response (clean 500, no leak)
+
+### Things implemented from resources
+- **How Spring resolves a thrown exception into a response:** `DispatcherServlet` consults `HandlerExceptionResolver`s in order — `ExceptionHandlerExceptionResolver` (checks `@ExceptionHandler` methods, including advice classes) runs first, then `ResponseStatusExceptionResolver`, then `DefaultHandlerExceptionResolver`. If nothing in an advice class matches, Spring calls `sendError`, Tomcat forwards to `/error`, and Boot's `BasicErrorController` builds the default body — this is why every unhandled error looked the same before today.
+- **`@RestControllerAdvice` is composition, not inheritance:** it doesn't extend anything; it's a class Spring scans for `@ExceptionHandler` methods and applies globally. Each handler method builds a fresh `ErrorResponse` object and returns it wrapped in a `ResponseEntity`, which sets status and body together in one call.
+- **Most-specific-type matching:** `@ExceptionHandler` methods are matched by the closest matching exception type, so a catch-all `Exception` handler can coexist safely with more specific ones underneath it in scanning order — order in the file doesn't matter.
+- **`ResponseEntity.status(...).body(...)`:** the builder pattern used across all four handlers to control HTTP status and JSON body from a single return statement.
+- **SLF4J logging pattern:** `LoggerFactory.getLogger(Class)` plus `log.error(message, exceptionObject)` — passing the exception as the second argument is what prints the full stack trace to the log, standard across the Spring ecosystem.
+
+### Next
+- connect to a real Postgres database — replace the in-memory `HashMap` storage in `ProductService`/`OrderService` with JPA entities and a repository layer; treating this as its own day given how much Day 6 already covered
+- move `NOT_FOUND` handling fully out of the service layer if not already addressed by the new handler (carried over from Day 5's notes)
